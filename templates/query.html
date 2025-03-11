@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Query Documents</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 20px; }
+      input[type="text"] { width: 300px; }
+      pre { background: #f5f5f5; padding: 10px; border: 1px solid #ddd; }
+      ul { list-style-type: none; padding: 0; }
+      li { margin-bottom: 5px; }
+    </style>
+</head>
+<body>
+    <h1>Query Documents</h1>
+    <form method="post" action="/query">
+        <label for="keyword">Enter keyword to search documents:</label>
+        <input type="text" name="keyword" id="keyword" value="{{ keyword }}" required>
+        <input type="submit" value="Query Documents">
+    </form>
+    <hr>
+    {% if log %}
+      <h2>Log Output</h2>
+      <pre>{{ log }}</pre>
+    {% endif %}
+    {% if results %}
+      <h2>Documents where keyword was found (click a link to view):</h2>
+      <ul>
+      {% for key, url in results %}
+          <li><a href="{{ url }}" target="_blank">{{ key }}</a></li>
+      {% endfor %}
+      </ul>
+    {% endif %}
+</body>
+</html>
+

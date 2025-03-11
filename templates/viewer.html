@@ -13,15 +13,19 @@
     }
     canvas {
       border: 1px solid #000;
+      display: block;
     }
     .textLayer {
       position: absolute;
       top: 0;
       left: 0;
       pointer-events: none;
+      color: transparent; /* non-highlighted text is invisible */
+      white-space: pre;
     }
     .highlight {
       background-color: yellow;
+      color: black;
     }
     #controls {
       margin-bottom: 10px;
@@ -29,6 +33,7 @@
   </style>
 </head>
 <body>
+  <h1>PDF Viewer</h1>
   <div id="controls">
     <button id="prev">Previous Page</button>
     <button id="next">Next Page</button>
@@ -39,23 +44,16 @@
     <div id="text-layer" class="textLayer"></div>
   </div>
   <script>
-    // Set up PDF.js worker
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
 
-    // Helper to get query parameters
     function getQueryParam(param) {
       const params = new URLSearchParams(window.location.search);
       return params.get(param);
     }
 
-    // Retrieve the file URL and keyword from the URL parameters
-    // The 'file' parameter is URL-encoded, so decode it
     const fileUrl = decodeURIComponent(getQueryParam('file') || "");
     const keyword = getQueryParam('keyword') || "";
-
-    console.log("Viewer Loaded");
-    console.log("fileUrl:", fileUrl);
-    console.log("keyword:", keyword);
 
     let pdfDoc = null,
         pageNum = 1,
@@ -66,64 +64,62 @@
         ctx = canvas.getContext('2d'),
         textLayerDiv = document.getElementById('text-layer');
 
-    // Renders a page of the PDF along with a text layer.
+    function highlightText(str, keyword) {
+      if (!keyword) return document.createTextNode(str);
+      const lcStr = str.toLowerCase();
+      const lcKeyword = keyword.toLowerCase();
+      let start = 0, index;
+      const frag = document.createDocumentFragment();
+
+      while ((index = lcStr.indexOf(lcKeyword, start)) !== -1) {
+        if (index > start) {
+          frag.appendChild(document.createTextNode(str.substring(start, index)));
+        }
+        const highlightSpan = document.createElement('span');
+        highlightSpan.classList.add('highlight');
+        highlightSpan.textContent = str.substring(index, index + keyword.length);
+        frag.appendChild(highlightSpan);
+        start = index + keyword.length;
+      }
+      if (start < str.length) {
+        frag.appendChild(document.createTextNode(str.substring(start)));
+      }
+      return frag;
+    }
+
     function renderPage(num) {
       pageRendering = true;
-      textLayerDiv.innerHTML = ''; // Clear previous text layer
+      textLayerDiv.innerHTML = '';
 
       pdfDoc.getPage(num).then(function(page) {
-        const viewport = page.getViewport({scale: scale});
-        canvas.height = viewport.height;
+        const viewport = page.getViewport({ scale });
         canvas.width = viewport.width;
-        textLayerDiv.style.height = canvas.height + 'px';
-        textLayerDiv.style.width = canvas.width + 'px';
+        canvas.height = viewport.height;
+        textLayerDiv.style.width = viewport.width + 'px';
+        textLayerDiv.style.height = viewport.height + 'px';
 
-        // Render the page into the canvas
-        const renderContext = {
-          canvasContext: ctx,
-          viewport: viewport
-        };
+        const renderContext = { canvasContext: ctx, viewport };
         const renderTask = page.render(renderContext);
-
         renderTask.promise.then(function() {
           pageRendering = false;
           if (pageNumPending !== null) {
             renderPage(pageNumPending);
             pageNumPending = null;
           }
-        }).catch(function(err) {
-          console.error("Page render error:", err);
         });
 
-        // Render text layer and highlight keyword matches
         page.getTextContent().then(function(textContent) {
           textContent.items.forEach(function(item) {
             const span = document.createElement('span');
-            span.textContent = item.str + " ";
-            // Calculate positioning using PDF.js utility
-            const transform = pdfjsLib.Util.transform(viewport.transform, item.transform);
-            const x = transform[4];
-            const y = transform[5];
-            const fontSize = Math.sqrt(transform[0] * transform[0] + transform[1] * transform[1]);
-
-            span.style.position = 'absolute';
-            span.style.left = x + 'px';
-            span.style.top = (y - fontSize) + 'px';
-            span.style.fontSize = fontSize + 'px';
+            span.appendChild(highlightText(item.str, keyword));
+            const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
+            const transformStr = `matrix(${tx[0]}, ${tx[1]}, ${tx[2]}, ${tx[3]}, ${tx[4]}, ${tx[5]})`;
+            span.style.transform = transformStr;
             span.style.transformOrigin = '0 0';
-
-            // If the text item contains the keyword, add a highlight style
-            if (keyword && item.str.toLowerCase().includes(keyword.toLowerCase())) {
-              span.classList.add('highlight');
-            }
-
+            span.style.whiteSpace = 'pre';
             textLayerDiv.appendChild(span);
           });
-        }).catch(function(err) {
-          console.error("Text layer error:", err);
         });
-      }).catch(function(err) {
-        console.error("Get page error:", err);
       });
 
       document.getElementById('page_num').textContent = num;
@@ -152,16 +148,12 @@
     document.getElementById('prev').addEventListener('click', onPrevPage);
     document.getElementById('next').addEventListener('click', onNextPage);
 
-    // If fileUrl is empty, let the user know
     if (!fileUrl) {
-      alert("No PDF URL provided.");
+      alert("No PDF URL provided (use ?file=...)");
     } else {
-      // Load the PDF document
-      console.log("Loading PDF:", fileUrl);
-      pdfjsLib.getDocument(fileUrl).promise.then(function(pdfDoc_) {
-        pdfDoc = pdfDoc_;
+      pdfjsLib.getDocument(fileUrl).promise.then(function(pdf) {
+        pdfDoc = pdf;
         document.getElementById('page_count').textContent = pdfDoc.numPages;
-        console.log("PDF loaded. Number of pages:", pdfDoc.numPages);
         renderPage(pageNum);
       }).catch(function(err) {
         console.error("Error loading PDF:", err);
@@ -171,4 +163,3 @@
   </script>
 </body>
 </html>
-

@@ -6,7 +6,7 @@ import time
 
 # S3 bucket and directory (prefix) where files will be stored
 BUCKET_NAME = 'weber436'
-DOCUMENTS_PREFIX = 'documents/'  # all files will be stored under this prefix
+DOCUMENTS_PREFIX = 'documents/'  # All files stored under this prefix
 
 # Create clients for S3 and Textract
 s3_client = boto3.client('s3')
@@ -19,7 +19,6 @@ def upload_file(file_path):
         return f"Error: File {file_path} does not exist."
 
     filename = os.path.basename(file_path)
-    # Use posixpath.join to ensure forward slashes for S3 keys
     s3_key = posixpath.join(DOCUMENTS_PREFIX, filename)
 
     try:
@@ -39,7 +38,6 @@ def list_documents():
     if 'Contents' not in response:
         return [], "No documents found in the specified directory."
 
-    # Exclude the directory itself if it shows up
     files = [obj['Key'] for obj in response['Contents'] if obj['Key'] != DOCUMENTS_PREFIX]
     return files, "Documents listed successfully."
 
@@ -48,9 +46,6 @@ def extract_text_and_pages(s3_key):
     """
     Extract text from a multi-page document in S3 using Textract's asynchronous API.
     Returns a list of tuples (line_text, page_number) for each line.
-    
-    This function starts a Textract job, waits for it to complete, and then retrieves
-    the text blocks from all pages.
     """
     try:
         start_response = textract_client.start_document_text_detection(
@@ -60,7 +55,7 @@ def extract_text_and_pages(s3_key):
     except Exception as e:
         return [], f"Error starting asynchronous text detection for {s3_key}: {e}"
 
-    # Poll for the job to complete
+    # Poll for job completion
     while True:
         try:
             response = textract_client.get_document_text_detection(JobId=job_id)
@@ -71,16 +66,15 @@ def extract_text_and_pages(s3_key):
             break
         elif status == 'FAILED':
             return [], f"Text detection job failed for {s3_key}"
-        time.sleep(5)  # Wait 5 seconds before polling again
+        time.sleep(5)  # Poll every 5 seconds
 
-    # Collect all results, handling pagination if needed
+    # Collect results (handle pagination if needed)
     results = []
     results.extend([
         (block['Text'], block.get('Page', 1))
         for block in response.get('Blocks', [])
         if block['BlockType'] == 'LINE'
     ])
-
     while 'NextToken' in response:
         try:
             response = textract_client.get_document_text_detection(
@@ -114,10 +108,9 @@ def query_documents(keyword):
     """
     Query all documents in S3 for a keyword.
     For each document where the keyword is found (using Textract output), 
-    generate a presigned URL and build a link to a custom viewer page.
+    generate a presigned URL and build a link to the viewer page.
     
-    The viewer page is hosted on S3 as a static website.
-    Replace the viewer URL below with your actual S3 website endpoint.
+    The viewer page is served by your Flask app at /viewer.
     """
     documents, msg = list_documents()
     if not documents:
@@ -140,8 +133,8 @@ def query_documents(keyword):
                 # URL-encode the presigned URL and keyword so that query parameters don't conflict
                 encoded_presigned_url = urllib.parse.quote_plus(presigned_url)
                 encoded_keyword = urllib.parse.quote_plus(keyword)
-                # Make sure this endpoint matches the one shown in your S3 console for static hosting
-                viewer_url = f"http://weber436.s3-website.us-east-2.amazonaws.com/viewer.html?file={encoded_presigned_url}&keyword={encoded_keyword}"
+                # Use a relative URL for the viewer page served by Flask
+                viewer_url = f"/viewer?file={encoded_presigned_url}&keyword={encoded_keyword}"
                 found_links.append((s3_key, viewer_url))
             else:
                 log_messages += f"Failed to generate URL for {s3_key}.\n"
