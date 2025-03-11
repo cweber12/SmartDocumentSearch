@@ -73,7 +73,7 @@ def generate_presigned_url(s3_key, expires_in=3600):
             ExpiresIn=expires_in
         )
         return url
-    except Exception as e:
+    except Exception:
         return None
 
 
@@ -84,8 +84,7 @@ def query_documents(keyword):
     generate a presigned URL and build a link to a custom viewer page.
     
     The viewer page is hosted on S3 as a static website.
-    Replace "http://my-static-viewer-bucket.s3-website-us-east-1.amazonaws.com/viewer.html" 
-    with your actual S3 website endpoint.
+    Replace the viewer URL below with your actual S3 website endpoint.
     """
     documents, msg = list_documents()
     if not documents:
@@ -108,7 +107,8 @@ def query_documents(keyword):
                 # URL-encode the presigned URL and keyword so that query parameters don't conflict
                 encoded_presigned_url = urllib.parse.quote_plus(presigned_url)
                 encoded_keyword = urllib.parse.quote_plus(keyword)
-                viewer_url = f"http://weber436.s3-website-us-east-2.amazonaws.com/viewer.html?file={encoded_presigned_url}&keyword={encoded_keyword}"
+                # Make sure this endpoint matches the one shown in your S3 console for static hosting
+                viewer_url = f"http://weber436.s3-website.us-east-2.amazonaws.com/viewer.html?file={encoded_presigned_url}&keyword={encoded_keyword}"
                 found_links.append((s3_key, viewer_url))
             else:
                 log_messages += f"Failed to generate URL for {s3_key}.\n"
@@ -117,3 +117,4 @@ def query_documents(keyword):
     if not found_links:
         log_messages += f"No documents contained the keyword '{keyword}'.\n"
     return found_links, log_messages
+

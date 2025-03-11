@@ -9,6 +9,7 @@
   <style>
     #pdf-container {
       position: relative;
+      display: inline-block;
     }
     canvas {
       border: 1px solid #000;
@@ -48,9 +49,13 @@
     }
 
     // Retrieve the file URL and keyword from the URL parameters
-    // The 'file' parameter is URL-encoded so we decode it
-    const fileUrl = decodeURIComponent(getQueryParam('file'));
+    // The 'file' parameter is URL-encoded, so decode it
+    const fileUrl = decodeURIComponent(getQueryParam('file') || "");
     const keyword = getQueryParam('keyword') || "";
+
+    console.log("Viewer Loaded");
+    console.log("fileUrl:", fileUrl);
+    console.log("keyword:", keyword);
 
     let pdfDoc = null,
         pageNum = 1,
@@ -58,9 +63,8 @@
         pageNumPending = null,
         scale = 1.5,
         canvas = document.getElementById('pdf-canvas'),
-        ctx = canvas.getContext('2d');
-
-    const textLayerDiv = document.getElementById('text-layer');
+        ctx = canvas.getContext('2d'),
+        textLayerDiv = document.getElementById('text-layer');
 
     // Renders a page of the PDF along with a text layer.
     function renderPage(num) {
@@ -80,12 +84,15 @@
           viewport: viewport
         };
         const renderTask = page.render(renderContext);
+
         renderTask.promise.then(function() {
           pageRendering = false;
           if (pageNumPending !== null) {
             renderPage(pageNumPending);
             pageNumPending = null;
           }
+        }).catch(function(err) {
+          console.error("Page render error:", err);
         });
 
         // Render text layer and highlight keyword matches
@@ -98,18 +105,25 @@
             const x = transform[4];
             const y = transform[5];
             const fontSize = Math.sqrt(transform[0] * transform[0] + transform[1] * transform[1]);
+
             span.style.position = 'absolute';
             span.style.left = x + 'px';
             span.style.top = (y - fontSize) + 'px';
             span.style.fontSize = fontSize + 'px';
             span.style.transformOrigin = '0 0';
+
             // If the text item contains the keyword, add a highlight style
             if (keyword && item.str.toLowerCase().includes(keyword.toLowerCase())) {
               span.classList.add('highlight');
             }
+
             textLayerDiv.appendChild(span);
           });
+        }).catch(function(err) {
+          console.error("Text layer error:", err);
         });
+      }).catch(function(err) {
+        console.error("Get page error:", err);
       });
 
       document.getElementById('page_num').textContent = num;
@@ -138,12 +152,23 @@
     document.getElementById('prev').addEventListener('click', onPrevPage);
     document.getElementById('next').addEventListener('click', onNextPage);
 
-    // Load the PDF document
-    pdfjsLib.getDocument(fileUrl).promise.then(function(pdfDoc_) {
-      pdfDoc = pdfDoc_;
-      document.getElementById('page_count').textContent = pdfDoc.numPages;
-      renderPage(pageNum);
-    });
+    // If fileUrl is empty, let the user know
+    if (!fileUrl) {
+      alert("No PDF URL provided.");
+    } else {
+      // Load the PDF document
+      console.log("Loading PDF:", fileUrl);
+      pdfjsLib.getDocument(fileUrl).promise.then(function(pdfDoc_) {
+        pdfDoc = pdfDoc_;
+        document.getElementById('page_count').textContent = pdfDoc.numPages;
+        console.log("PDF loaded. Number of pages:", pdfDoc.numPages);
+        renderPage(pageNum);
+      }).catch(function(err) {
+        console.error("Error loading PDF:", err);
+        alert("Failed to load PDF. Check console for details.");
+      });
+    }
   </script>
 </body>
 </html>
+
