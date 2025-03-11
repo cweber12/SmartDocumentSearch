@@ -13,15 +13,27 @@
     }
     canvas {
       border: 1px solid #000;
+      display: block;
     }
+    /* 
+       By default, make the textLayer text fully transparent, 
+       so we only see the PDF text from the canvas behind it.
+    */
     .textLayer {
       position: absolute;
       top: 0;
       left: 0;
       pointer-events: none;
+      color: transparent; /* all non-highlighted text is invisible */
+      white-space: pre;
     }
+    /*
+       Highlighted text is shown in black on a yellow background.
+       This ensures only the matched keyword is visible on top of the PDF.
+    */
     .highlight {
       background-color: yellow;
+      color: black;
     }
     #controls {
       margin-bottom: 10px;
@@ -39,44 +51,76 @@
     <div id="text-layer" class="textLayer"></div>
   </div>
   <script>
-    // Set up PDF.js worker
+    // PDF.js worker setup
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
 
-    // Helper to get query parameters
+    // Helper to parse query parameters: ?file=...&keyword=...
     function getQueryParam(param) {
       const params = new URLSearchParams(window.location.search);
       return params.get(param);
     }
 
-    // Retrieve the file URL and keyword from the URL parameters
-    // The 'file' parameter is URL-encoded, so decode it
     const fileUrl = decodeURIComponent(getQueryParam('file') || "");
     const keyword = getQueryParam('keyword') || "";
 
-    console.log("Viewer Loaded");
-    console.log("fileUrl:", fileUrl);
-    console.log("keyword:", keyword);
+    let pdfDoc = null;
+    let pageNum = 1;
+    let pageRendering = false;
+    let pageNumPending = null;
+    const scale = 1.5;
+    const canvas = document.getElementById('pdf-canvas');
+    const ctx = canvas.getContext('2d');
+    const textLayerDiv = document.getElementById('text-layer');
 
-    let pdfDoc = null,
-        pageNum = 1,
-        pageRendering = false,
-        pageNumPending = null,
-        scale = 1.5,
-        canvas = document.getElementById('pdf-canvas'),
-        ctx = canvas.getContext('2d'),
-        textLayerDiv = document.getElementById('text-layer');
+    /**
+     * highlightText:
+     * Splits the text around the 'keyword' matches. Only the matching substring
+     * is wrapped in <span class="highlight"> so that it becomes visible.
+     * The rest is left transparent by default.
+     */
+    function highlightText(str, keyword) {
+      if (!keyword) {
+        // If no keyword, just return the entire text as a normal text node
+        // which will be transparent, so effectively invisible.
+        return document.createTextNode(str);
+      }
+      const lcStr = str.toLowerCase();
+      const lcKeyword = keyword.toLowerCase();
+      let start = 0;
+      let index;
+      const frag = document.createDocumentFragment();
 
-    // Renders a page of the PDF along with a text layer.
+      while ((index = lcStr.indexOf(lcKeyword, start)) !== -1) {
+        // text before match
+        if (index > start) {
+          frag.appendChild(document.createTextNode(str.substring(start, index)));
+        }
+        // matched substring
+        const highlightSpan = document.createElement('span');
+        highlightSpan.classList.add('highlight');
+        highlightSpan.textContent = str.substring(index, index + keyword.length);
+        frag.appendChild(highlightSpan);
+
+        start = index + keyword.length;
+      }
+      // leftover text
+      if (start < str.length) {
+        frag.appendChild(document.createTextNode(str.substring(start)));
+      }
+      return frag;
+    }
+
+    // Renders the given page (pageNum) of the PDF
     function renderPage(num) {
       pageRendering = true;
-      textLayerDiv.innerHTML = ''; // Clear previous text layer
+      textLayerDiv.innerHTML = ''; // Clear the previous text layer
 
       pdfDoc.getPage(num).then(function(page) {
-        const viewport = page.getViewport({scale: scale});
+        const viewport = page.getViewport({ scale: scale });
         canvas.height = viewport.height;
         canvas.width = viewport.width;
-        textLayerDiv.style.height = canvas.height + 'px';
-        textLayerDiv.style.width = canvas.width + 'px';
+        textLayerDiv.style.height = viewport.height + 'px';
+        textLayerDiv.style.width = viewport.width + 'px';
 
         // Render the page into the canvas
         const renderContext = {
@@ -84,7 +128,6 @@
           viewport: viewport
         };
         const renderTask = page.render(renderContext);
-
         renderTask.promise.then(function() {
           pageRendering = false;
           if (pageNumPending !== null) {
@@ -95,27 +138,20 @@
           console.error("Page render error:", err);
         });
 
-        // Render text layer and highlight keyword matches
+        // Render text layer
         page.getTextContent().then(function(textContent) {
           textContent.items.forEach(function(item) {
             const span = document.createElement('span');
-            span.textContent = item.str + " ";
-            // Calculate positioning using PDF.js utility
-            const transform = pdfjsLib.Util.transform(viewport.transform, item.transform);
-            const x = transform[4];
-            const y = transform[5];
-            const fontSize = Math.sqrt(transform[0] * transform[0] + transform[1] * transform[1]);
+            // Insert text with highlight only for the matched substring
+            span.appendChild(highlightText(item.str, keyword));
 
-            span.style.position = 'absolute';
-            span.style.left = x + 'px';
-            span.style.top = (y - fontSize) + 'px';
-            span.style.fontSize = fontSize + 'px';
+            // Position it exactly over the PDF using a matrix transform
+            const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
+            const transformStr = `matrix(${tx[0]}, ${tx[1]}, ${tx[2]}, ${tx[3]}, ${tx[4]}, ${tx[5]})`;
+            span.style.transform = transformStr;
             span.style.transformOrigin = '0 0';
-
-            // If the text item contains the keyword, add a highlight style
-            if (keyword && item.str.toLowerCase().includes(keyword.toLowerCase())) {
-              span.classList.add('highlight');
-            }
+            // Keep white-space so that text spacing is preserved
+            span.style.whiteSpace = 'pre';
 
             textLayerDiv.appendChild(span);
           });
@@ -152,16 +188,12 @@
     document.getElementById('prev').addEventListener('click', onPrevPage);
     document.getElementById('next').addEventListener('click', onNextPage);
 
-    // If fileUrl is empty, let the user know
     if (!fileUrl) {
-      alert("No PDF URL provided.");
+      alert("No PDF URL provided (use ?file=...).");
     } else {
-      // Load the PDF document
-      console.log("Loading PDF:", fileUrl);
       pdfjsLib.getDocument(fileUrl).promise.then(function(pdfDoc_) {
         pdfDoc = pdfDoc_;
         document.getElementById('page_count').textContent = pdfDoc.numPages;
-        console.log("PDF loaded. Number of pages:", pdfDoc.numPages);
         renderPage(pageNum);
       }).catch(function(err) {
         console.error("Error loading PDF:", err);
