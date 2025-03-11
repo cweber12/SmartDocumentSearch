@@ -2,6 +2,7 @@ import os
 import posixpath  # Ensures S3 keys use forward slashes
 import boto3
 import urllib.parse
+import time
 
 # S3 bucket and directory (prefix) where files will be stored
 BUCKET_NAME = 'weber436'
@@ -9,7 +10,7 @@ DOCUMENTS_PREFIX = 'documents/'  # all files will be stored under this prefix
 
 # Create clients for S3 and Textract
 s3_client = boto3.client('s3')
-textract_client = boto3.client('textract')
+textract_client = boto3.client('textract', region_name='us-east-2')
 
 
 def upload_file(file_path):
@@ -20,7 +21,7 @@ def upload_file(file_path):
     filename = os.path.basename(file_path)
     # Use posixpath.join to ensure forward slashes for S3 keys
     s3_key = posixpath.join(DOCUMENTS_PREFIX, filename)
-    
+
     try:
         s3_client.upload_file(file_path, BUCKET_NAME, s3_key)
         return f"Uploaded {file_path} to s3://{BUCKET_NAME}/{s3_key}"
@@ -37,7 +38,7 @@ def list_documents():
 
     if 'Contents' not in response:
         return [], "No documents found in the specified directory."
-    
+
     # Exclude the directory itself if it shows up
     files = [obj['Key'] for obj in response['Contents'] if obj['Key'] != DOCUMENTS_PREFIX]
     return files, "Documents listed successfully."
@@ -45,22 +46,54 @@ def list_documents():
 
 def extract_text_and_pages(s3_key):
     """
-    Extract text from a document in S3 using Textract.
+    Extract text from a multi-page document in S3 using Textract's asynchronous API.
     Returns a list of tuples (line_text, page_number) for each line.
+    
+    This function starts a Textract job, waits for it to complete, and then retrieves
+    the text blocks from all pages.
     """
     try:
-        response = textract_client.detect_document_text(
-            Document={'S3Object': {'Bucket': BUCKET_NAME, 'Name': s3_key}}
+        start_response = textract_client.start_document_text_detection(
+            DocumentLocation={'S3Object': {'Bucket': BUCKET_NAME, 'Name': s3_key}}
         )
+        job_id = start_response['JobId']
     except Exception as e:
-        return [], f"Error extracting text from {s3_key}: {e}"
+        return [], f"Error starting asynchronous text detection for {s3_key}: {e}"
 
+    # Poll for the job to complete
+    while True:
+        try:
+            response = textract_client.get_document_text_detection(JobId=job_id)
+        except Exception as e:
+            return [], f"Error getting Textract job result for {s3_key}: {e}"
+        status = response['JobStatus']
+        if status == 'SUCCEEDED':
+            break
+        elif status == 'FAILED':
+            return [], f"Text detection job failed for {s3_key}"
+        time.sleep(5)  # Wait 5 seconds before polling again
+
+    # Collect all results, handling pagination if needed
     results = []
-    for block in response.get('Blocks', []):
-        if block['BlockType'] == 'LINE':
-            # For multi-page documents, Textract often includes a "Page" field.
-            page = block.get('Page', 1)
-            results.append((block['Text'], page))
+    results.extend([
+        (block['Text'], block.get('Page', 1))
+        for block in response.get('Blocks', [])
+        if block['BlockType'] == 'LINE'
+    ])
+
+    while 'NextToken' in response:
+        try:
+            response = textract_client.get_document_text_detection(
+                JobId=job_id, NextToken=response['NextToken']
+            )
+        except Exception as e:
+            return results, f"Error retrieving paginated results for {s3_key}: {e}"
+        results.extend([
+            (block['Text'], block.get('Page', 1))
+            for block in response.get('Blocks', [])
+            if block['BlockType'] == 'LINE'
+        ])
+
     return results, f"Extracted text with page numbers from {s3_key}."
 
 
@@ -117,4 +150,3 @@ def query_documents(keyword):
     if not found_links:
         log_messages += f"No documents contained the keyword '{keyword}'.\n"
     return found_links, log_messages
-
