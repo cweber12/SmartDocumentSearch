@@ -1,0 +1,10 @@
+# Exclude virtual environment and unnecessary files
+.venv/
+__pycache__/
+.git/
+.gitignore
+logs/
+node_modules/
+.DS_Store
+*.log
+*.sqlite3

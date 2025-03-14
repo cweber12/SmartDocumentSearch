@@ -3,6 +3,6 @@
       "app_function": "app.app",
       "aws_region": "us-east-2",
       "profile_name": "default",
-      "s3_bucket": "your-zappa-bucket-name"
+      "s3_bucket": "elasticbeanstalk-us-east-2-537124934274"
     }
   }

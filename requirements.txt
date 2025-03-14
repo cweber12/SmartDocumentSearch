@@ -1,4 +1,11 @@
-
 Flask==2.2.3
-zappa==0.54.1
 boto3==1.26.0
+gunicorn==23.0.0
+tensorflow==2.18.0
+numpy>=1.26.0,<2.1.0
+pandas==2.2.3
+requests==2.32.3
+werkzeug==2.2.3
+mysql-connector-python==9.1.0
+pyodbc==5.2.0
+zappa==0.54.1
