@@ -1,13 +1,9 @@
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
 import s3_operations
-import boto3
 import os
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key_here'  # Change this to a secure value
-
-s3_client = boto3.client('s3')
-BUCKET_NAME = 'weber436'
 
 @app.route('/')
 def index():
@@ -52,7 +48,7 @@ def upload():
         return redirect(url_for('login'))
     
     if request.method == 'POST':
-        folder = request.form['folder']
+        folder = request.form['folder'].strip()
         files = request.files.getlist('file')
         
         if not folder:
@@ -77,9 +73,17 @@ def query():
         if not folder or not keyword:
             return "Error: Folder and keyword are required.", 400
 
+        # 🔹 Debugging: Print exact S3 keys stored in the folder
+        stored_files = s3_operations.debug_list_keys(session['username'], folder)
+        print("Stored files:", stored_files)  # ✅ This prints to the terminal
+
+        # 🔹 Run the query after confirming file paths
         results = s3_operations.query_documents(session['username'], folder, keyword)
 
-        return render_template('query.html', results=results, folder=folder, keyword=keyword)
+        # Convert S3 keys to public URLs
+        public_urls = [s3_operations.get_public_s3_url(file) for file in results]
+
+        return render_template('viewer.html', presigned_urls=public_urls)
 
     return render_template('query.html')
 
@@ -90,51 +94,39 @@ def viewer():
         return redirect(url_for('login'))
 
     keyword = request.args.get("keyword")
-    folder = request.args.get("folder")  # Get the folder from query params
+    folder = request.args.get("folder")
 
     if not keyword or not folder:
         return "Error: Missing keyword or folder.", 400
 
-    results = s3_operations.query_documents(session['username'], folder, keyword)  # Pass folder correctly
+    # 🔹 Get only the correct S3 object keys
+    results = s3_operations.query_documents(session['username'], folder, keyword)
 
-    return render_template('viewer.html', presigned_urls=results)
+    # ✅ Convert S3 keys to proper public URLs
+    public_urls = [s3_operations.get_public_s3_url(file) for file in results]
 
-@app.route("/upload", methods=["GET", "POST"])
-def upload_file_route():
-    if request.method == "POST":
-        if "file" not in request.files:
-            return "No file part"
+    return render_template('viewer.html', presigned_urls=public_urls)
 
-        file = request.files["file"]
+@app.route('/delete_query_results', methods=['POST'])
+def delete_query_results():
+    if 'username' not in session:
+        return jsonify({"error": "Unauthorized"}), 403
 
-        if file.filename == "":
-            return "No selected file"
+    keyword = request.form.get("keyword")
+    if not keyword:
+        return jsonify({"error": "Keyword is required"}), 400
 
-        if not allowed_file(file.filename):
-            return "Error: Only PDF files are allowed."
+    s3_operations.delete_query_results(session['username'], keyword)
+    return jsonify({"success": "Query results deleted successfully."})
 
-        # Save file temporarily in /tmp for AWS Elastic Beanstalk
-        temp_path = os.path.join("/tmp", file.filename)
-        file.save(temp_path)
-
-        # Upload to S3
-        upload_result = s3_operations.upload_file(temp_path)
-
-        # Remove temporary file after upload
-        os.remove(temp_path)
-
-        return upload_result  # Return success or error message
-
-    return render_template("upload.html")
-
-ALLOWED_EXTENSIONS = {"pdf"}  # Only allow PDFs
+ALLOWED_EXTENSIONS = {"pdf"}
 
 def allowed_file(filename):
     """Check if the uploaded file has a .pdf extension."""
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
-
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080)
+
 
 
