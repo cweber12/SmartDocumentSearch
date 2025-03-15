@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Upload Documents</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
+        form { display: inline-block; text-align: left; }
+        input, select { display: block; margin: 10px 0; padding: 8px; width: 200px; }
+    </style>
+</head>
+<body>
+    <a href="/" style="display: block; margin-bottom: 10px;">Home</a>
+    <h1>Upload Documents</h1>
+    <form method="post" action="/upload" enctype="multipart/form-data">
+        <label>Folder Name:</label>
+        <input type="text" name="folder" required>
+        <label>Select Files:</label>
+        <input type="file" name="file" multiple required>
+        <input type="submit" value="Upload">
+    </form>
+    {% if success %}<p style="color:green;">{{ success }}</p>{% endif %}
+    {% if error %}<p style="color:red;">{{ error }}</p>{% endif %}
+</body>
+</html>

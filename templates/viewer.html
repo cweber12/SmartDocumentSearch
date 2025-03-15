@@ -1,165 +1,27 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8">
-  <title>PDF Viewer with Keyword Highlight</title>
-  <!-- Load PDF.js from CDN -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js"></script>
-  <style>
-    #pdf-container {
-      position: relative;
-      display: inline-block;
-    }
-    canvas {
-      border: 1px solid #000;
-      display: block;
-    }
-    .textLayer {
-      position: absolute;
-      top: 0;
-      left: 0;
-      pointer-events: none;
-      color: transparent; /* non-highlighted text is invisible */
-      white-space: pre;
-    }
-    .highlight {
-      background-color: yellow;
-      color: black;
-    }
-    #controls {
-      margin-bottom: 10px;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <title>Document Viewer</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
+        .container { display: flex; flex-direction: column; align-items: center; }
+        iframe { width: 80%; height: 600px; margin-top: 20px; border: 1px solid #ddd; }
+        .download { margin-top: 20px; }
+    </style>
 </head>
 <body>
-  <h1>PDF Viewer</h1>
-  <div id="controls">
-    <button id="prev">Previous Page</button>
-    <button id="next">Next Page</button>
-    Page: <span id="page_num"></span> / <span id="page_count"></span>
-  </div>
-  <div id="pdf-container">
-    <canvas id="pdf-canvas"></canvas>
-    <div id="text-layer" class="textLayer"></div>
-  </div>
-  <script>
-    pdfjsLib.GlobalWorkerOptions.workerSrc =
-      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
-
-    function getQueryParam(param) {
-      const params = new URLSearchParams(window.location.search);
-      return params.get(param);
-    }
-
-    const fileUrl = decodeURIComponent(getQueryParam('file') || "");
-    const keyword = getQueryParam('keyword') || "";
-
-    let pdfDoc = null,
-        pageNum = 1,
-        pageRendering = false,
-        pageNumPending = null,
-        scale = 1.5,
-        canvas = document.getElementById('pdf-canvas'),
-        ctx = canvas.getContext('2d'),
-        textLayerDiv = document.getElementById('text-layer');
-
-    function highlightText(str, keyword) {
-      if (!keyword) return document.createTextNode(str);
-      const lcStr = str.toLowerCase();
-      const lcKeyword = keyword.toLowerCase();
-      let start = 0, index;
-      const frag = document.createDocumentFragment();
-
-      while ((index = lcStr.indexOf(lcKeyword, start)) !== -1) {
-        if (index > start) {
-          frag.appendChild(document.createTextNode(str.substring(start, index)));
-        }
-        const highlightSpan = document.createElement('span');
-        highlightSpan.classList.add('highlight');
-        highlightSpan.textContent = str.substring(index, index + keyword.length);
-        frag.appendChild(highlightSpan);
-        start = index + keyword.length;
-      }
-      if (start < str.length) {
-        frag.appendChild(document.createTextNode(str.substring(start)));
-      }
-      return frag;
-    }
-
-    function renderPage(num) {
-      pageRendering = true;
-      textLayerDiv.innerHTML = '';
-
-      pdfDoc.getPage(num).then(function(page) {
-        const viewport = page.getViewport({ scale });
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        textLayerDiv.style.width = viewport.width + 'px';
-        textLayerDiv.style.height = viewport.height + 'px';
-
-        const renderContext = { canvasContext: ctx, viewport };
-        const renderTask = page.render(renderContext);
-        renderTask.promise.then(function() {
-          pageRendering = false;
-          if (pageNumPending !== null) {
-            renderPage(pageNumPending);
-            pageNumPending = null;
-          }
-        });
-
-        page.getTextContent().then(function(textContent) {
-          textContent.items.forEach(function(item) {
-            const span = document.createElement('span');
-            span.appendChild(highlightText(item.str, keyword));
-            const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
-            const transformStr = `matrix(${tx[0]}, ${tx[1]}, ${tx[2]}, ${tx[3]}, ${tx[4]}, ${tx[5]})`;
-            span.style.transform = transformStr;
-            span.style.transformOrigin = '0 0';
-            span.style.whiteSpace = 'pre';
-            textLayerDiv.appendChild(span);
-          });
-        });
-      });
-
-      document.getElementById('page_num').textContent = num;
-    }
-
-    function queueRenderPage(num) {
-      if (pageRendering) {
-        pageNumPending = num;
-      } else {
-        renderPage(num);
-      }
-    }
-
-    function onPrevPage() {
-      if (pageNum <= 1) return;
-      pageNum--;
-      queueRenderPage(pageNum);
-    }
-
-    function onNextPage() {
-      if (pageNum >= pdfDoc.numPages) return;
-      pageNum++;
-      queueRenderPage(pageNum);
-    }
-
-    document.getElementById('prev').addEventListener('click', onPrevPage);
-    document.getElementById('next').addEventListener('click', onNextPage);
-
-    if (!fileUrl) {
-      alert("No PDF URL provided (use ?file=...)");
-    } else {
-      pdfjsLib.getDocument(fileUrl).promise.then(function(pdf) {
-        pdfDoc = pdf;
-        document.getElementById('page_count').textContent = pdfDoc.numPages;
-        renderPage(pageNum);
-      }).catch(function(err) {
-        console.error("Error loading PDF:", err);
-        alert("Failed to load PDF. Check console for details.");
-      });
-    }
-  </script>
+  <a href="/" style="display: block; margin-bottom: 10px;">Home</a>
+    <h1>Highlighted Documents</h1>
+    <div class="container">
+        {% if presigned_urls %}
+            {% for url in presigned_urls %}
+                <iframe src="{{ url }}"></iframe>
+                <a class="download" href="{{ url }}" download>Download PDF</a>
+            {% endfor %}
+        {% else %}
+            <p>No highlighted documents found.</p>
+        {% endif %}
+    </div>
 </body>
 </html>

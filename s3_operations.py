@@ -1,90 +1,97 @@
-import os
-import posixpath  # Ensures S3 keys use forward slashes
 import boto3
-import urllib.parse
-import time
+import os
+import hashlib
 import fitz  # PyMuPDF for PDF highlighting
+import time
 
-# S3 bucket and directory (prefix) where files will be stored
 BUCKET_NAME = 'weber436'
-DOCUMENTS_PREFIX = 'documents/'  # All files stored under this prefix
-
-# Create clients for S3 and Textract
 s3_client = boto3.client('s3')
 textract_client = boto3.client('textract', region_name='us-east-2')
 
+# User Management
 
-def upload_file(file_path):
-    """Upload a file to the S3 bucket under the documents directory."""
-    if not os.path.exists(file_path):
-        return f"Error: File {file_path} does not exist."
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
 
-    filename = os.path.basename(file_path)
-    s3_key = posixpath.join(DOCUMENTS_PREFIX, filename)
+def register_user(username, password):
+    user_folder = f'users/{username}/'
+    existing_users = list_users()
+    
+    if username in existing_users:
+        return False
+    
+    s3_client.put_object(Bucket=BUCKET_NAME, Key=user_folder)
+    s3_client.put_object(Bucket=BUCKET_NAME, Key=f'users/{username}/password.txt', Body=hash_password(password))
+    return True
 
+def authenticate_user(username, password):
     try:
-        s3_client.upload_file(file_path, BUCKET_NAME, s3_key)
-        return f"Uploaded {file_path} to s3://{BUCKET_NAME}/{s3_key}"
-    except Exception as e:
-        return f"Upload failed for {file_path}: {e}"
+        response = s3_client.get_object(Bucket=BUCKET_NAME, Key=f'users/{username}/password.txt')
+        stored_password = response['Body'].read().decode('utf-8')
+        return stored_password == hash_password(password)
+    except:
+        return False
 
+def list_users():
+    response = s3_client.list_objects_v2(Bucket=BUCKET_NAME, Prefix='users/', Delimiter='/')
+    return [prefix['Prefix'].split('/')[-2] for prefix in response.get('CommonPrefixes', [])]
 
-def list_documents():
-    """List all documents in the S3 bucket under the specified prefix."""
-    try:
-        response = s3_client.list_objects_v2(Bucket=BUCKET_NAME, Prefix=DOCUMENTS_PREFIX)
-    except Exception as e:
-        return [], f"Error listing documents: {e}"
+# File Management
 
-    if 'Contents' not in response:
-        return [], "No documents found in the specified directory."
+def upload_file(file, username, folder):
+    file_key = f'users/{username}/{folder}/{file.filename}'
+    s3_client.upload_fileobj(file, BUCKET_NAME, file_key)
+    return file_key
 
-    files = [obj['Key'] for obj in response['Contents'] if obj['Key'] != DOCUMENTS_PREFIX]
-    return files, "Documents listed successfully."
+def list_user_files(username):
+    response = s3_client.list_objects_v2(Bucket=BUCKET_NAME, Prefix=f'users/{username}/')
+    return [obj['Key'] for obj in response.get('Contents', [])]
 
+# Textract & Query
 
 def extract_text_with_coordinates(s3_key):
-    """
-    Extract text from a document in S3 using AWS Textract's asynchronous API.
-    Returns a list of extracted words along with their bounding box coordinates.
-    """
-    try:
-        start_response = textract_client.start_document_text_detection(
-            DocumentLocation={'S3Object': {'Bucket': BUCKET_NAME, 'Name': s3_key}}
-        )
-        job_id = start_response['JobId']
-    except Exception as e:
-        return [], f"Error starting Textract for {s3_key}: {e}"
+    # Check file size before processing
+    response = s3_client.head_object(Bucket=BUCKET_NAME, Key=s3_key)
+    file_size = response['ContentLength']
 
-    # Poll for job completion
+    if file_size == 0:
+        print(f"Error: {s3_key} is empty. Skipping Textract.")
+        return []
+
+    # Start Textract Job
+    response = textract_client.start_document_text_detection(
+        DocumentLocation={'S3Object': {'Bucket': BUCKET_NAME, 'Name': s3_key}}
+    )
+    job_id = response['JobId']
+    print(f"Textract Job Started: {job_id}")
+
+    # Wait for Textract to complete
     while True:
-        try:
-            response = textract_client.get_document_text_detection(JobId=job_id)
-        except Exception as e:
-            return [], f"Error retrieving Textract job result for {s3_key}: {e}"
-        
-        status = response['JobStatus']
-        if status == 'SUCCEEDED':
+        result = textract_client.get_document_text_detection(JobId=job_id)
+        job_status = result.get("JobStatus")
+
+        if job_status == "SUCCEEDED":
             break
-        elif status == 'FAILED':
-            return [], f"Textract job failed for {s3_key}"
-        time.sleep(5)
+        elif job_status == "FAILED":
+            print(f"Textract failed for {s3_key}")
+            return []
 
-    words = []
-    for block in response.get('Blocks', []):
-        if block['BlockType'] == 'WORD':
-            words.append({
-                'Text': block['Text'],
-                'BoundingBox': block['Geometry']['BoundingBox']
-            })
-    
-    return words, f"Extracted text and bounding boxes from {s3_key}."
+        print(f"Waiting for Textract job {job_id} to complete...")
+        time.sleep(5)  # Wait 5 seconds before checking again
 
+    # Process results
+    extracted_words = []
+    for item in result.get('Blocks', []):
+        if item['BlockType'] == 'WORD':
+            text = item.get('Text', None)  # Safe way to get text
+            bbox = item.get('Geometry', {}).get('BoundingBox', None)
+            if text and bbox:
+                extracted_words.append({'Text': text, 'BoundingBox': bbox})
+
+    return extracted_words
 
 def highlight_text_in_pdf(local_pdf, extracted_words, keyword):
-    """Highlight the given keyword in the PDF using Textract's bounding boxes."""
     doc = fitz.open(local_pdf)
-
     for page in doc:
         for word in extracted_words:
             if keyword.lower() in word['Text'].lower():
@@ -96,68 +103,56 @@ def highlight_text_in_pdf(local_pdf, extracted_words, keyword):
                     (bbox['Top'] + bbox['Height']) * page.rect.height
                 )
                 page.add_highlight_annot(rect)
-
     highlighted_pdf = "highlighted_" + local_pdf
     doc.save(highlighted_pdf)
     return highlighted_pdf
 
+def query_documents(username, folder, keyword):
+    user_folder = f'users/{username}/{folder}/'  # Restrict search to the folder
 
-def upload_to_s3(local_file, s3_key):
-    """Upload a file to S3 and return a presigned URL."""
-    s3_client.upload_file(local_file, BUCKET_NAME, s3_key)
-    return s3_client.generate_presigned_url('get_object', Params={'Bucket': BUCKET_NAME, 'Key': s3_key}, ExpiresIn=3600)
+    # List all files in the specified folder
+    response = s3_client.list_objects_v2(Bucket=BUCKET_NAME, Prefix=user_folder)
 
+    if 'Contents' not in response:
+        print(f"No documents found in {user_folder}")
+        return []
 
-def generate_presigned_url(s3_key, expires_in=3600):
-    """Generate a presigned URL for the given S3 object."""
-    try:
-        url = s3_client.generate_presigned_url(
-            'get_object',
-            Params={'Bucket': BUCKET_NAME, 'Key': s3_key},
-            ExpiresIn=expires_in
-        )
-        return url
-    except Exception:
-        return None
+    user_files = [obj['Key'] for obj in response['Contents']]
+    print(f"Found files: {user_files}")  # Debugging output
 
-
-def query_documents(keyword):
-    """
-    Query all documents in S3 for a keyword.
-    If the keyword is found in a document, generate a highlighted version.
-    Returns a list of highlighted PDF URLs.
-    """
-    documents, msg = list_documents()
-    if not documents:
-        return [], f"No documents found. {msg}"
-
+    query_folder = f'users/{username}/query_results/{keyword}/'
     found_links = []
-    log_messages = ""
-    
-    for s3_key in documents:
-        log_messages += f"Processing {s3_key}...\n"
 
-        # Extract text and coordinates
-        extracted_words, txt_msg = extract_text_with_coordinates(s3_key)
-        log_messages += txt_msg + "\n"
+    for s3_key in user_files:
+        if not s3_key.lower().endswith('.pdf'):
+            continue  # Skip non-PDF files
+
+        print(f"Processing: {s3_key}")  # Debugging output
+        extracted_words = extract_text_with_coordinates(s3_key)
 
         if not extracted_words:
-            continue  # Skip if no text found
+            continue
 
-        # Download original PDF from S3
-        local_pdf = "original.pdf"
+        local_pdf = "temp.pdf"
         s3_client.download_file(BUCKET_NAME, s3_key, local_pdf)
 
-        # Highlight text in PDF
         highlighted_pdf = highlight_text_in_pdf(local_pdf, extracted_words, keyword)
+        highlighted_key = query_folder + "highlighted_" + os.path.basename(s3_key)
 
-        # Upload highlighted PDF to S3
-        highlighted_key = "highlighted_" + s3_key
-        presigned_url = upload_to_s3(highlighted_pdf, highlighted_key)
-
+        s3_client.upload_file(highlighted_pdf, BUCKET_NAME, highlighted_key)
+        presigned_url = s3_client.generate_presigned_url(
+            'get_object', Params={'Bucket': BUCKET_NAME, 'Key': highlighted_key}, ExpiresIn=3600
+        )
         found_links.append((s3_key, presigned_url))
 
-    if not found_links:
-        log_messages += f"No documents contained the keyword '{keyword}'.\n"
+    return found_links
 
-    return found_links, log_messages
+
+def delete_query_results(username, keyword):
+    query_folder = f'users/{username}/query_results/{keyword}/'
+    response = s3_client.list_objects_v2(Bucket=BUCKET_NAME, Prefix=query_folder)
+    if 'Contents' in response:
+        for obj in response['Contents']:
+            s3_client.delete_object(Bucket=BUCKET_NAME, Key=obj['Key'])
+
+

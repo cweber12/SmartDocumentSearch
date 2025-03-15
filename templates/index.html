@@ -16,18 +16,14 @@
       max-width: 600px;
       margin: auto;
       box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      text-align: center;
     }
     h1 {
       text-align: center;
     }
-    p {
-      text-align: center;
-      font-size: 16px;
-    }
     ul {
       list-style-type: none;
       padding: 0;
-      text-align: center;
     }
     li {
       margin: 10px 0;
@@ -40,16 +36,28 @@
     a:hover {
       color: #2980b9;
     }
+    .user-info {
+      margin-top: 15px;
+      font-size: 16px;
+      color: #333;
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>Document Search App</h1>
-    <p>Welcome! Use the options below to query or view documents.</p>
-    <ul>
-      <li><a href="/query">Query Documents</a></li>
-      <li><a href="/viewer">View Document</a></li>
-    </ul>
+
+    {% if username %}
+      <p class="user-info">Logged in as: <strong>{{ username }}</strong></p>
+      <ul>
+        <li><a href="/upload">Upload Documents</a></li>
+        <li><a href="/query">Query Documents</a></li>
+        <li><a href="/viewer">View Document</a></li>
+        <li><a href="/logout" style="color: red;">Logout</a></li>
+      </ul>
+    {% else %}
+      <p><a href="/login">Login</a> or <a href="/register">Register</a></p>
+    {% endif %}
   </div>
 </body>
 </html>
